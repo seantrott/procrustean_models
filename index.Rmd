@@ -1,0 +1,609 @@
+---
+title: "Bias, variance, and the bed of Procrustes"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+  pdf_document: default
+  word_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dpi=300)
+```
+
+**Sean Trott**  
+
+
+
+# Introduction
+
+Imagine you're a weary traveler making the pilgrimage from Athens to Eleusis. Along the way, you encounter a smith bearing the name [Procrustes](https://en.wikipedia.org/wiki/Procrustes) (literally "the stretcher [who hammers out the metal]"); you take this form-meaning correspondence to be an auspicious signal of his smithing competence. Procrustes, upon seeing your condition, invites you to stay the night in his home--he has a spare bed. 
+
+There's just one condition: if you don't fit the bed exactly--if you're too long, or too short--he'll have to make you fit. That could mean cutting off your legs (if you're too long) or using a hammer to stretch you out (if you're too short). The important thing is that you fit the bed exactly. 
+
+Suddenly, the name "Procrustes" acquires a distinct--and certainly less auspicious--shade of meaning.
+
+## A metaphorical bed
+
+The story of Procrustes has a natural extension as an allegory about the perils of standardization and uniformity. It's quite literally a tale in which a character applies a "one-size-fits-all" mentality, to the detriment of virtually everyone he encounters (except, of course, for the lucky few whose proportions are already matched to the bed). The tendency of individuals and societal institutions to enforce arbitrary standards is certainly not a new observation, nor is [its connection to this myth](https://en.wikipedia.org/wiki/Procrustes#Cultural_references).
+
+The notion of a "Procrustean bed" has even been applied to scientists' proclivity to try to "fit" any data they observe into their so-called "Ruling Theory", no matter the [epicycles](https://en.wikipedia.org/wiki/Deferent_and_epicycle#Bad_science) required (Dobzhansky, 1955; see also Platt, 1964).
+
+In this post, I want to make yet another connection--the relationship between a "Procrustean bed" and the notion of [**model bias**](https://en.wikipedia.org/wiki/Bias_of_an_estimator) in statistics, and ultimately the idea of a [bias-variance tradeoff](https://en.wikipedia.org/wiki/Bias%E2%80%93variance_tradeoff). I found (and continue to find) these concepts tricky to navigate, and my hope is that the metaphor of Procrustes serves as a useful illustration. (I fully recognize the irony of contorting a statistical concept into some unrelated, tired analogy--a kind of Standardized Procrustean Metaphor.)
+
+# Load libraries
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+set.seed(10)
+```
+
+
+# What is model bias?
+
+The goal of most statistical models is to approximate the **function** $f(x)$ that generated a set of data. 
+
+In the context of a regression model, this amounts to finding values for the set of *coefficients* $[\beta_1, \beta_2, ..., \beta_n]$ which, given input data $X$, produce predicted values $Y'$. Typically, the goal is to minimize the distance (or squared distance, etc.) between actual values $Y$ and predicted values $Y'$. In other words: we want to build a *model* that reproduces the actual data as close as possible^[Such a model is useful for making **predictions** about data we haven't yet observed, or, in the context of some rich theoretical framework, for helping to inform mechanistic causal models by which various phenomena are related.].
+
+But models vary enormously in their degree of **flexibility** and **complexity**. Some models can learn arbitrarily complex functions, while others are limited to only a straight line. This flexibility is at the heart of the **bias-variance tradeoff**. 
+
+## Defining "bias"
+
+According to James et al (2013, pg. 35):
+
+> bias refers to the error that is introduced by approximating a real-life problem, which may be extremely complicated, by a much simpler model.
+
+That is, **model bias** is what happens when we make simplifying assumptions about the function we're trying to learn (as pretty much all parametric models do). If this doesn't yet make sense, don't worry——it'll hopefully become clear as we go through some examples. 
+
+## Low flexibility, high bias
+
+Model bias is intricately bound up with model flexibility. 
+
+A minimally flexible model might be one which just produces the same predicted value $Y'$, no matter the value of $X$. A realistic example of this might be predicting the *mean* of $Y$——i.e., just plotting a horizontal line on top of our data. 
+
+Let's illustrate this below. First, I'll generate two random normal distributions using `rnorm`, each with $n = 20$ data points and centered around a population mean of $\mu = 50$ ($\sigma = 10$). These distributions are both random, and thus shouldn't be related to each other in any systematic way. We can visualize both using `geom_point`, and then draw a *horizontal line* on top of this graph representing the mean of $Y$.
+
+```{r}
+X = rnorm(n=20, mean=50, sd=10)
+Y = rnorm(n=20, mean=50, sd=10)
+df_random_example = data.frame(X, Y)
+
+df_random_example %>%
+  ggplot(aes(x = X,
+             y = Y)) +
+  geom_point(alpha = .4, color = "blue", size = 4) +
+  geom_hline(yintercept = mean(df_random_example$Y), linetype = "dotted",
+             color = "blue") +
+  theme_minimal()
+
+```
+ 
+We can think of this as a very simple model with minimal flexibility, in which our predictions are just the mean of our sample $Y$:
+
+$Y' = \bar{Y}$
+
+Obviously, such a model won't do a very good job of describing our data. It doesn't even consider the value of $X$ when making predictions!
+
+The data above were generated to be related in an essentially random way. But the failings of such a model are even clearer when the data *do* have some systematic relationship. Below, I simulate a linear relationship between the same $X$ distribution and some new $Y$ distribution as follows:
+
+$Y = 20 + 2*X + \epsilon$
+
+Where our error term $\epsilon$ is defined as a normal distribution: $Normal(\mu = 1, \sigma = 10)$.
+
+
+```{r}
+Y = 20 + X * 2 + rnorm(n=20, mean=1, sd = 2)
+df_linear = data.frame(X, Y)
+
+df_linear %>%
+  ggplot(aes(x = X,
+             y = Y)) +
+  geom_point(alpha = .4, color = "blue", size = 4) +
+  geom_hline(yintercept = mean(df_linear$Y), linetype = "dotted",
+             color = "blue") +
+  theme_minimal()
+```
+
+Now our minimally flexible model looks even worse, in the sense that there *is* a clear pattern in the data, but our model just can't capture it. 
+
+Of course, a technique like linear regression *would* capture such a relationship fairly well. In linear regression, we find a set of coefficients for each predictor variable $[X_1, X_2, ..., X_n]$ such that the **sum squared error** between our predicted values $Y'$ and real values $Y$ are minimized——with the constraint, of course, that the function being modeled is assumed to be linear.
+
+Here, there's just a single $X$ variable, so we fit parameters for the linear equation:
+
+$Y' = \beta_0 + \beta_1X$
+
+Using `geom_smooth`, we can plot a regression line (along with standard error) over our $X$ and $Y$ variables:
+
+```{r}
+df_linear %>%
+  ggplot(aes(x = X,
+             y = Y)) +
+  geom_point(alpha = .4, color = "blue", size = 4) +
+  geom_hline(yintercept = mean(df_linear$Y), linetype = "dotted",
+             color = "blue") +
+  geom_smooth(method = "lm") +
+  theme_minimal()
+```
+
+
+This fits the data much better. This is because we have an additional *degree of freedom*: rather than just predicting a single value (regardless of $X$), we condition our predictions on the value of $X$. Correspondingly, such a model should have a much lower **residual sum of squares** (RSS), which we calculate in the following way:
+
+$RSS = \sum(Y' - Y)^2$
+
+```{r}
+y_pred1 = rep(mean(Y), length(Y))
+rss_1 = sum((y_pred1 - Y)**2)
+rss_1
+
+linear_model = lm(data = df_linear, Y ~ X)
+y_pred2 = predict(linear_model)
+rss_2 = sum((y_pred2 - Y)**2)
+rss_2
+```
+
+Our RSS for the linear model is better than the mean-only model by a factor of about `r round(rss_1 / rss_2, 2)`. 
+
+But while this linear model is more flexible, it's still far from nimble. A linear model--as the name implies--assumes the shape of the function that generated the data is **linear**. This is a kind of Procrustean simplification; real-world relationships are rarely perfectly linear, but in many scientific and applied disciplines, we pretend as if they are and see how far that assumption gets us. And it's true that many relationships can be approximated by a linear function within some bounds.
+
+That's all well and good until we encounter data that's truly, clearly non-linear, at which point linear models start to fail pretty catastrophically. Now let's fit a linear model to an exponential function. What you'll see below is the real data points (shown in blue) and the predicted data points (shown in red), along with a dotted red line between each (showing the residual error for each point).
+
+```{r}
+X = c(1:10)
+Y = 2**X + 20
+  
+df_exponential = data.frame(X, Y)
+
+procrustean_model = lm(data = df_exponential, Y ~ X)
+df_exponential$predicted = predict(procrustean_model)
+
+df_exponential %>%
+  ggplot(aes(x = X,
+             y = Y)) +
+  geom_point(size = 4, alpha = .4, color = "blue") +
+  geom_point(aes(x = X, y = predicted), size = 4, alpha = .4, color = "red") +
+  geom_segment(aes(xend = X, yend = predicted), color = "red", linetype = "dotted") +
+  theme_minimal()
+  
+```
+
+Now a linear model fits very poorly. First, we get negative predictions for small values of X, which is incorrect; but even worse, our model is utterly unable to capture the exponential increase in values of $Y$ as $X$ increases. By the time $X = 10$, we vastly underestimate the value of $Y$--and that's for data that's in our training set!
+
+It gets even worse once you consider the problem of **extrapolation**--making predictions for values of $X$ outside the range of our initial observations.
+
+To illustrate this, let's extend $X$ and $Y$ using the same function, then make predictions for these new values of $X$ using the model we just trained above.
+
+```{r}
+X = c(1:15)
+Y_real = 2**X + 20
+
+df_exp2 = data.frame(X, Y_real)
+df_exp2$predicted = predict(procrustean_model, df_exp2)
+
+```
+
+Now let's extend our x-axis to include the new values of $X$:
+
+```{r}
+df_exp2 %>%
+  ggplot(aes(x = X,
+             y = Y_real)) +
+  geom_point(size = 4, alpha = .4, color = "blue") +
+  geom_point(aes(x = X, y = predicted), size = 4, alpha = .4, color = "red") +
+  geom_segment(aes(xend = X, yend = predicted), color = "red", linetype = "dotted") +
+  theme_minimal()
+```
+
+As we see, prediction error increases rapidly as $X$ increases. That's because we assumed the relationship between $X$ and $Y$ was linear, and fit a line to the 10 data points we observed. As we **extrapolate** beyond the bounds of those initial observations, it becomes increasingly clear that this assumption of **linearity** was false--leading to disastrous underestimates of the real values of $Y$.
+
+Returning to the issue at hand: a linear model has relatively little **flexibility**, and as a result of this, fitting a model to non-linear data will result in **high bias**. A linear model is akin to Procrustes hammering or cutting the legs of his guests so that they fit the bed--the model has an implicit **theory** of how the data were generated, and can only fit parameters consistent with that theory.
+
+## High flexibility, low bias
+
+The Procrustean metaphor also suggests an obvious, intuitive solution: what if we just refrained from imposing such a strong *bias* about the data-generating process, and instead gave our model more flexibility?
+
+One way to add flexibility is to fit a **higher-order** polynomial to our data. That is, rather than fitting the linear equation:
+
+$Y' = \beta_0 + \beta_1X$
+
+We can add a quadratic term, such as:
+
+$Y' = \beta_0 + \beta_1X + \beta_2X^2$
+
+This gives us additional **degrees of freedom**--that is, much more flexibility in terms of the functions it can fit. 
+
+In R, we can actually tell `lm` to use a polynomial using the `poly` command. Here, we specify that we want a polynomial of degree $2$, allowing us to fit a quadratic relationship between $X$ and $Y$.
+
+```{r}
+m_poly = lm(data = df_exp2,
+            Y_real ~ poly(X, degree=2, raw=TRUE))
+summary(m_poly)
+```
+
+Now, as you see the in the `summary` above, we have coefficients for each term. Let's look at our predictions now:
+
+```{r}
+
+df_exp2$predicted = predict(m_poly)
+
+df_exp2 %>%
+  ggplot(aes(x = X,
+             y = Y_real)) +
+  geom_point(size = 4, alpha = .4, color = "blue") +
+  geom_point(aes(x = X, y = predicted), size = 4, alpha = .4, color = "red") +
+  geom_segment(aes(xend = X, yend = predicted), color = "red", linetype = "dotted") +
+  theme_minimal()
+```
+
+Much better than before, certainly! 
+
+Obviously we still haven't captured the true shape of the function--which should be obvious, because the true shape is exponential and we're modeling it with a quadratic function. However, adding even *more* polynomial terms can give us even more flexibility, potentially allowing us to fit an exponential much better. 
+
+For example, in addition to this squared term, we could add a *cubed* term:
+
+$Y' = \beta_0 + \beta_1X + \beta_2X^2 + \beta_3X^3$
+
+
+```{r}
+m_poly = lm(data = df_exp2,
+            Y_real ~ poly(X, degree=3, raw=TRUE))
+summary(m_poly)
+
+df_exp2$predicted = predict(m_poly)
+
+df_exp2 %>%
+  ggplot(aes(x = X,
+             y = Y_real)) +
+  geom_point(size = 4, alpha = .4, color = "blue") +
+  geom_point(aes(x = X, y = predicted), size = 4, alpha = .4, color = "red") +
+  geom_segment(aes(xend = X, yend = predicted), color = "red", linetype = "dotted") +
+  theme_minimal()
+```
+
+Now we do even better. Again, there's residual error, but we're getting closer and closer to approximating the true shape of the function. And in fact, the more we increase the *order* of our polynomial, the more flexibility we have--and the better **fit** our resulting model will have.
+
+## Other functions
+
+It's fun to play around with other kinds of functions as well. 
+
+If you want to see how *noise* affects your estimates, you can add normally distributed noise to these functions using the `rnorm` function. For example, we can generate a sine wave with some amount of error:
+
+
+```{r}
+X = seq(1, 20, by=.1)
+Y = sin(X) + rnorm(n=length(X), mean=1, sd=.2)
+
+df_sine = data.frame(X, Y)
+df_sine %>%
+  ggplot(aes(x = X,
+             y = Y)) +
+  geom_point() +
+  theme_minimal()
+```
+
+A line will certainly not fit this data very well, but it's also clearly not random!
+
+Once again, higher-order polynomials will come in handy. As it turns out, we need a much higher degree polynonmial to get close to approximating this sine function. Even at degree $k = 8$, we're still making some pretty big errors:
+
+```{r}
+m_poly = lm(data = df_sine,
+            Y ~ poly(X, degree=8, raw=TRUE))
+
+df_sine$predicted = predict(m_poly)
+
+df_sine %>%
+  ggplot(aes(x = X,
+             y = Y)) +
+  geom_point() +
+  geom_line(aes(x = X, y = predicted), color = "red") +
+  # geom_point(aes(x = X, y = predicted), alpha = .4, color = "red") +
+  geom_segment(aes(xend = X, yend = predicted), color = "red", linetype = "dotted") +
+  theme_minimal()
+```
+
+
+## Caveat and summary
+
+Before I go on, I want to just note that I'm by no means an expert in curve-fitting. There exist many more other techniques for fitting a function to your data, ranging from things like **Generalized Additive Models** (or *GAMS*) to just pumping all your data through a neural network and identifying whatever relationships you can.
+
+At the end of the day, our goal (typically) is to try to recover (or at least approximate) the function that generated the data. The assumption, of course, is that there *is* some underlying function, and that the data-generating process has been subjected to some kind of *noise* (i.e., the complexity of the real world). Approaches for recovering this function range from the "very parametric" (if you have a specific hypothesis about its shape) to the "very non-parametric" (where a system tests many different hypotheses and finds the best one(s), typically requiring lots of data to do this robustly). 
+
+The key concept I'm trying to get across is simply that these **models** can have more or less **flexibility**. One intuitive way to add flexibility is to fit a higher-order polynomial ^[Or use something like a [non-linear kernel](https://seantrott.github.io/binary_classification_R/#support_vector_machines).]. Models with less flexibility impose stronger assumptions about the shape of the function--that is, they consider less *hypotheses* about what shape the function might take. And any "mistakes" that the model makes because of this inflexibility are referred to as **bias**.
+
+This is why I say that bias reflects the **Procrustean nature** of a statistical model.
+
+# Variance: the other side of flexibility
+
+At this point, you might be thinking: why not just *always* use a maximally flexible model? If Procrustes is the villain of this statistical analogy, then the logical hero should be his foil--perhaps a mountain-dwelling artisan willing to craft custom beds for any passers-by.
+
+Recall the goal of building a statistical modeling: we want to approximate some function $f(x)$ that's putatively responsible for generating a set of data. However, the assumption is these data have likely been subjected to some amount of noise--the data aren't the function itself, they represent a *sample* from some underlying population that we want to characterize.
+
+So just as oversimplifications lead to *bias*, fitting our models to the exact shape of the data we observe means that we might miss out on **generalizations** across multiple samples (i.e., multiple datasets).
+
+## Defining variance
+
+Again, I'll let James et al (2013, pg. 34) define our terms:
+
+> Variance refers to the amount by which f would change if we estimated it using a different training data set. Since the training data are used to fit the statistical learning method, different training data sets will result in a different f. But ideally the estimate for f should not vary too much between training sets...In general, more flexible statistical methods have higher variance.
+
+Imagine fitting a model to our dataset many different times, but making very small changes to that dataset (e.g., changing a single point) each time. **Variance** refers to the amount that our estimated function $f(x)$ would change across each of those fits.
+
+Again, this is like the opposite of a Procrustean bed: rather than forcing all passers-by to use the same bed, we create a different bed for each person--even when their proportions differ by only an inch or two. In the realm of custom furniture, this may not seem like such a bad idea. But in the realm of science, we're interested in making **generalizations** about the world; we don't want to posit a different function for each sample we observe.
+
+## High flexibility, high variance
+
+Like bias, **variance** is directly related to the flexiblity of a model. But unlike bias, variance is *positively* correlated with flexiblity: more flexible models will likely exhibit higher variance.
+
+To demonstrate this, let's first generate a dataset with some noise, fit to the equation:
+
+$Y = X + \epsilon$
+
+Where $\epsilon$ is defined as Gaussian noise with $\sigma = 5$. So in other words, the "true" relationship is just $Y = X$, but we assume that our sample has been subjected to some noise--perhaps what our subjects ate for breakfast, the weather, or any other complexities of the messy real world.
+
+Note that here, our true relationship really is linear, as we've defined the function this way.
+
+```{r}
+
+X = seq(0, 20, .5)
+Y_true = X
+Y_s1 = Y_true + rnorm(n=length(X), mean = 0, sd = 5)
+
+df_noise = data.frame(X, Y_true, Y_s1)
+
+df_noise %>%
+  ggplot(aes(x = X,
+             y = Y_s1)) +
+  geom_point() +
+  geom_line(aes(x = X, y = Y_true), color = "blue", alpha = .4) +
+  theme_minimal()
+```
+
+That blue line in the graph above represents the "true" relationship between $X$ and $Y$, that is, $Y = X$. But our *observed* values for $Y$ (`Y_s1`) have been subjected to some "noisy" process during our sampling process. This means that our actual data points don't match up perfectly with the true regression line.
+
+Now let's see what happens if we fit a high-order polynomial ($k = 10$) to the data. After all, more flexibility is always better, right?
+
+We first fit an `lm` model using the `poly` function, setting `degree = 10`, then generate the predictions from this function.
+
+Let's look at the function we just learned:
+
+```{r}
+m_poly = lm(data = df_noise,
+            Y_s1 ~ poly(X, degree=10, raw=TRUE))
+
+df_noise$predicted = predict(m_poly)
+
+```
+
+Let's look at the function we just learned (see below). It's clearly captured *something* about the underlying relationship--namely, that $Y$ tends to increase as $X$ increases, but the function it's learned is much more complex. We *know* the true function is linear, but this function has all sorts of strange oscillations. That's because the model's tripping over itself in an effort to produce a better and better **fit** to the data we observed.
+
+```{r}
+
+df_noise %>%
+  ggplot(aes(x = X,
+             y = Y_s1)) +
+  geom_point() +
+  geom_line(aes(x = X, y = predicted), color = "red") +
+  geom_line(aes(x = X, y = Y_true), color = "blue", alpha = .4) +
+  # scale_y_continuous(limits = c(-200, 800)) +
+  # geom_point(aes(x = X, y = predicted), alpha = .4, color = "red") +
+  # geom_segment(aes(xend = X, yend = predicted), color = "red", linetype = "dotted") +
+  theme_minimal()
+
+```
+
+Now let's imagine that we take *another* sample from our population. So we have the same values of $X$, and the same relationship between $X$ and $Y$, but now we undergo yet another round of **sampling error**. We define this error identically to above (Gaussian noise with $\sigma = 5$), but because it's *random error*, it'll obviously produce different values for $Y$.
+
+```{r}
+df_noise$Y_s2 = Y_true + rnorm(n=length(X), mean = 0, sd = 5)
+```
+
+Also as before, this new sample of $Y$ should exhibit a roughly linear relationship with $X$. Let's visualize that below:
+
+```{r}
+df_noise %>%
+  ggplot(aes(x = X,
+             y = Y_s2)) +
+  geom_point() +
+  geom_line(aes(x = X, y = Y_true), color = "blue", alpha = .4) +
+  theme_minimal()
+
+```
+
+But now, let's visualize our **predictions** ($Y'$) from the complex model we just fit earlier. This allows us to see how well the function we fit to our first sample **generalizes** to the second sample. If we've learned something "true" about the data, we should be able to generalize pretty well. But if our model is overly tuned to noise in the first sample (i.e., it's **overfit**), then generalization will be poor.
+
+
+```{r}
+df_noise %>%
+  ggplot(aes(x = X,
+             y = Y_s2)) +
+  geom_point() +
+  geom_line(aes(x = X, y = predicted), color = "red") +
+  geom_line(aes(x = X, y = Y_true), color = "blue", alpha = .4) +
+  # scale_y_continuous(limits = c(-200, 800)) +
+  # geom_point(aes(x = X, y = predicted), alpha = .4, color = "red") +
+  geom_segment(aes(xend = X, yend = predicted), color = "red", linetype = "dotted") +
+  theme_minimal()
+```
+
+This model has quite a bit of error. We can compare the RSS of our model's predictions against the first sample and the second sample:
+
+```{r}
+rss_1 = sum((df_noise$predicted - df_noise$Y_s1)**2)
+rss_1
+rss_2 = sum((df_noise$predicted - df_noise$Y_s2)**2)
+rss_2
+```
+
+The RSS of our model on the *second* sample is about `r round(rss_2 / rss_1)` higher than the first sample. **Why?**
+
+### Overfitting
+
+The reason is something called [**overfitting**](https://en.wikipedia.org/wiki/Overfitting). Here's a sentence from the Wikipedia summary that I think describes it better that I would:
+
+> The essence of overfitting is to have unknowingly extracted some of the residual variation (i.e. the noise) as if that variation represented underlying model structure.
+
+In other words: the model's parameters are too closely tuned to the data we observed. But remember that the data we observe are always only a **sample**--the goal of statistical modeling is to make inferences about the underlying **population**. And if we mistake **sampling error** for "real" structure in the data, then our models won't generalize well across samples.
+
+Connecting this to variance: if we're overfitting, our models will change considerably if we simply fit them to another sample. This is what I aim to demonstrate below.
+
+## Model variance across samples
+
+Earlier, I showed that fitting a very complex model to noisy data can result in **overfitting**--it appears to fit very well to one sample, but fails to generalize to another sample.
+
+Now, I'll demonstrate variance by fitting a variety of different models to *different* samples. The amount that our model changes across each sample can be conceptualized as the **variance** of that model.
+
+To start, let's refit our model to `Y_s2`, the second sample from our population.
+
+```{r}
+m_poly = lm(data = df_noise,
+            Y_s2 ~ poly(X, degree=10, raw=TRUE))
+
+df_noise$predicted_2 = predict(m_poly)
+```
+
+Now we can visualize and compare the predictions from *two* statistical models:
+
+- A model fit to $X$ and $Y_1$  
+- A model fit to $X$ and $Y_2$
+
+Let's first just visualize the **shape** of each model:
+
+```{r}
+
+df_noise %>%
+  ggplot() +
+  geom_line(aes(x = X, y = predicted), color = "red") +
+  geom_line(aes(x = X, y = predicted_2), color = "gray") +
+  theme_minimal()
+
+```
+
+These look pretty different! Neither reflects the shape of the true function (which is linear), and both exhibit considerable fluctuation that's tuned to the noise in their sample.
+
+We can also just plot the predictions of **model 1** directly against the predictions of **model 2**. Keep in mind that if these models have learned similar things about the underlying data, the predictions from each should exhibit a pretty linear, positive relationship.
+
+```{r}
+df_noise %>%
+  ggplot(aes(x = predicted,
+             y = predicted_2)) +
+  geom_point() +
+  theme_minimal()
+```
+
+Clearly, that's not what happened.
+
+## Low flexibility, low variance
+
+If high flexibility leads to high variance, then low flexibility should lead to lower variance. We can demonstrate this by returning to a method we critiqued earlier for its relative **bias**: good old-fashioned linear regression.
+
+Let's fit two different linear models to the two samples, $Y_s1$ and $Y_s2$, then make predictions from each of those models.
+
+```{r}
+m_linear = lm(data = df_noise,
+              Y_s1 ~ X)
+
+df_noise$predicted_linear_1 = predict(m_linear)
+
+m_linear = lm(data = df_noise,
+              Y_s2 ~ X)
+
+df_noise$predicted_linear_2 = predict(m_linear)
+```
+
+Now let's visualize those predictions, along with the **true** population line:
+
+```{r}
+
+df_noise %>%
+  ggplot() +
+  geom_line(aes(x = X, y = predicted_linear_1), color = "red") +
+  geom_line(aes(x = X, y = predicted_linear_2), color = "gray") +
+  geom_line(aes(x = X, y = Y_true), color = "blue", alpha = .4) +
+  theme_minimal()
+```
+
+Some variance, to be sure: model 1 overestimates $Y'$ for small values of $X$ and underestimates it for larger values of $X$; model 2 does the opposite. But both hew pretty closely to the true regression line. 
+
+Another way to assess how well they fit is to compare their RSS, both on the sample for which they were fit and on the "test" sample. We can also compare these RSS values to the **train/test** RSS for the more complex models fit above.
+
+```{r}
+rss_train_linear1 = sum((df_noise$predicted_linear_1 - df_noise$Y_s1)**2)
+rss_test_linear1 = sum((df_noise$predicted_linear_1 - df_noise$Y_s2)**2)
+
+rss_train_linear2 = sum((df_noise$predicted_linear_2 - df_noise$Y_s2)**2)
+rss_test_linear2 = sum((df_noise$predicted_linear_2 - df_noise$Y_s1)**2)
+
+rss_train_poly1 = sum((df_noise$predicted - df_noise$Y_s1)**2)
+rss_test_poly1 = sum((df_noise$predicted - df_noise$Y_s2)**2)
+
+rss_train_poly2 = sum((df_noise$predicted_2 - df_noise$Y_s2)**2)
+rss_test_poly2 = sum((df_noise$predicted_2 - df_noise$Y_s1)**2)
+
+df_rss = data.frame(linear_1 = c(rss_train_linear1, rss_test_linear1),
+                    linear_2 = c(rss_train_linear2, rss_test_linear2),
+                    poly_1 = c(rss_train_poly1, rss_test_poly1),
+                    poly_2 = c(rss_train_poly2, rss_test_poly2),
+                    split = c("train", "test")) %>%
+  gather(... = c(linear_1, linear_2, poly_1, poly_2), key = "model", value = "RSS")
+
+df_rss %>%
+  ggplot(aes(x = split,
+             y = RSS,
+             fill = model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()
+
+```
+
+We find that the **complex models** (`poly_1` and `poly_2`) fit quite well on the **training** data (the samples for which they were originally fit).
+
+But crucially, these complex models fit much *worse* (higher RSS) on the **test** data (the samples that they *weren't* fit to). This is a classic sign of overfitting, and demonstrates that they're worse at *generalizing* to data they haven't yet seen.
+
+Interestingly, the *mean* RSS across train/test splits are about the same for the linear vs. polynomial models:
+
+```{r}
+df_rss$model_type = c(rep(c("linear"), 4), rep(c("poly"), 4))
+
+df_rss %>%
+  group_by(model_type) %>%
+  summarise(mean_rss = mean(RSS),
+            sd_rss = sd(RSS))
+```
+
+However, we don't necessarily care about the *average* performance across training and test data. The goal of statistical modeling is to build models that **generalize**. This is precisely why the machine learning community has made a point of testing their models on *held-out* sets--there's a general awareness that complex models tend to overfit to training data.
+
+This isn't an argument against using complex models. But it is a kind of cautionary tale. The more flexibility you give a model, the more it will try to explain *any and all* variance in your data. But not all variance is "equal", so to speak--some of it likely reflects an underlying function (the data-generating process), and some of it reflects processes we're not modeling explicitly (e.g., other regressors we haven't measured). 
+
+Theoretically, you could achieve perfect model fit if you simply increased your model parameters to match the number of data points you have. But such a model likely wouldn't *explain* the data--it would just recapitulate it. And it would certainly fail to generalize.
+
+# Conclusion and takeaways
+
+Like all things in life, statistical models always come with a tradeoff. 
+
+On the one hand, we can render our models rigid and inflexible by imposing strong **assumptions** about the shape of the function we're trying to learn. For example, we can assume that function is linear. Real-world relationships are rarely perfectly linear ^[And the assumption of linearity often has [humorous consequences](https://xkcd.com/1007/)], but sometimes it behooves us to pretend as if they are. Oversimplifying our models can, however, lead to **bias**: we fail to model an important source of complexity in the real data because our models are told to ignore it. (The failings of linear regression are well-illustrated by [Anscombe's quartet](https://en.wikipedia.org/wiki/Anscombe%27s_quartet).)
+
+On the other hand, we can give our models the freedom to explain all the variance in $Y$ that they can. In the most extreme case, this might involve fitting a function to *every* data point--after all, such a model would minimize residual error. But remember that our goal is to approximate the function that's responsible for the data as best as possible--not reconstruct the data, point for point. So we need to make sure our models don't **overfit** to the data in a sample, as this will likely result in **high-variance** models that are unable to generalize.
+
+In the analogy underlying this blog post, I've compared **statistical models** to beds. Procrustes represents generalization taken to its logical extreme: we only "know" about a single function (e.g., a linear function), and we assume that all data must be fit with this function, leading to *bias*. *Variance*, the other side of flexibility, would thus appear to have its analog in custom-made beds, perfectly matched for the proportions of the sleeper. This latter point is, of course, where the metaphor itself becomes truly Procrustean; it's not immediately clear why tailormade beds are a *problem*, but high-variance models surely are ^[There's perhaps an interesting parallel to draw here between the **proclivity to generalize** that we find in much of science, and the sort of **closely fit** models of the environment that one finds in local knowledge (Scott, 1998). But that seems like a topic for another post.]. Concretely, high-variance models pose a problem to **generalization**, which, recall, is the goal of statistics--maybe not so much with craft furniture.
+
+This does echo a more general epistemological tension between the utility of **simplified abstractions**, on the one hand, and the **messy complexity** of the real world on the other. All maps of the world are simplifications; otherwise we'd just be recreating the territory (see Borges on [Exactitude in Science](https://en.wikipedia.org/wiki/On_Exactitude_in_Science)). But there's always a question of *which* dimensions of variability one is permitted to generalize across in our search for these simplified abstractions. 
+
+And unfortunately, there's really no easy answer to this tension. In statistics, we can rely on (again, simplified) metrics like RSS or other measures of model fit--but no measure of model fit tells the whole story (how could it?). The situation gets even more challenging as we move into the realm of verbal theories. Being wrong is inevitable. Perhaps all we can hope for is that the ways in which we are wrong do not cause too much harm, and that we have the grace and humility to update our beliefs and try again.
+
+
+# References
+
+Dobzhansky, T. (1955). "A review of some fundamental concepts and problems of population genetics". Cold Spring Harbor Symposia on Quantitative Biology. 20: 1–15. doi:10.1101/SQB.1955.020.01.003.
+
+James, G., Witten, D., Hastie, T., & Tibshirani, R. (2013). An introduction to statistical learning (Vol. 112, p. 18). New York: springer.
+
+McElreath, R. (2020). Statistical rethinking: A Bayesian course with examples in R and Stan. CRC press.
+
+Platt, J. R. (1964). Strong inference. science, 146(3642), 347-353.
+
+Scott, J. C. (1998). Seeing like a state: How certain schemes to improve the human condition have failed. Yale University Press.
+
+
+
+# Footnotes
