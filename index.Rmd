@@ -4,6 +4,7 @@ output:
   html_document:
     toc: yes
     toc_float: yes
+    code_folding: hide
   pdf_document: default
   word_document:
     toc: yes
@@ -545,7 +546,8 @@ df_rss = data.frame(linear_1 = c(rss_train_linear1, rss_test_linear1),
                     poly_1 = c(rss_train_poly1, rss_test_poly1),
                     poly_2 = c(rss_train_poly2, rss_test_poly2),
                     split = c("train", "test")) %>%
-  gather(... = c(linear_1, linear_2, poly_1, poly_2), key = "model", value = "RSS")
+  pivot_longer(c(linear_1, linear_2, poly_1, poly_2), 
+                names_to = "model", values_to = "RSS")
 
 df_rss %>%
   ggplot(aes(x = split,
