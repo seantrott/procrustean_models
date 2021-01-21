@@ -562,19 +562,6 @@ We find that the **complex models** (`poly_1` and `poly_2`) fit quite well on th
 
 But crucially, these complex models fit much *worse* (higher RSS) on the **test** data (the samples that they *weren't* fit to). This is a classic sign of overfitting, and demonstrates that they're worse at *generalizing* to data they haven't yet seen.
 
-Interestingly, the *mean* RSS across train/test splits are about the same for the linear vs. polynomial models:
-
-```{r}
-df_rss$model_type = c(rep(c("linear"), 4), rep(c("poly"), 4))
-
-df_rss %>%
-  group_by(model_type) %>%
-  summarise(mean_rss = mean(RSS),
-            sd_rss = sd(RSS))
-```
-
-However, we don't necessarily care about the *average* performance across training and test data. The goal of statistical modeling is to build models that **generalize**. This is precisely why the machine learning community has made a point of testing their models on *held-out* sets--there's a general awareness that complex models tend to overfit to training data.
-
 This isn't an argument against using complex models. But it is a kind of cautionary tale. The more flexibility you give a model, the more it will try to explain *any and all* variance in your data. But not all variance is "equal", so to speak--some of it likely reflects an underlying function (the data-generating process), and some of it reflects processes we're not modeling explicitly (e.g., other regressors we haven't measured). 
 
 Theoretically, you could achieve perfect model fit if you simply increased your model parameters to match the number of data points you have. But such a model likely wouldn't *explain* the data--it would just recapitulate it. And it would certainly fail to generalize.
